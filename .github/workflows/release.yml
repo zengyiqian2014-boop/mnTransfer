@@ -15,7 +15,7 @@ jobs:
           - os: windows-2022
             label: Windows-x64
             arch: win64_msvc2022_64
-          - os: macos-latest
+          - os: macos-15
             label: macOS
             arch: clang_64
           - os: ubuntu-24.04
@@ -25,6 +25,9 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Select the SDK supported by Qt 6.8
+        if: runner.os == 'macOS'
+        run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
@@ -68,8 +71,12 @@ jobs:
           $env:VCINSTALLDIR = "$vs/VC/"
           windeployqt --release --no-translations --no-opengl-sw dist/mnTransfer.exe
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $redist = Get-ChildItem "$vs/VC/Redist/MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          Get-ChildItem "$($redist.FullName)/x64/Microsoft.VC*.CRT/*.dll" | Copy-Item -Destination dist/
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC" -Recurse -Directory |
+            Where-Object { $_.Name -like 'Microsoft.VC*.CRT' -and $_.Parent.Name -eq 'x64' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'The x64 Visual C++ runtime was not found' }
+          Get-ChildItem "$($crt.FullName)/*.dll" | Copy-Item -Destination dist/
+          if (!(Test-Path dist/vcruntime140.dll) -or !(Test-Path dist/msvcp140.dll)) { throw 'The portable runtime is incomplete' }
           Copy-Item -Path README.md,LICENSE,THIRD_PARTY.md,PROTOCOL.md -Destination dist/
           @("Commit: $env:GITHUB_SHA", "Qt: 6.8.3", "Architecture: x64") | Set-Content dist/BUILD_INFO.txt
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" list | Add-Content dist/BUILD_INFO.txt
@@ -89,6 +96,8 @@ jobs:
           cp README.md LICENSE THIRD_PARTY.md PROTOCOL.md dist/
           printf 'Commit: %s\nQt: 6.8.3\nArchitecture: %s\n' "$GITHUB_SHA" "$(uname -m)" > dist/BUILD_INFO.txt
           brew list --versions libsodium >> dist/BUILD_INFO.txt
+          env -u QT_PLUGIN_PATH dist/mnTransfer.app/Contents/MacOS/mnTransfer --screenshot dist/preview.png
+          test -s dist/preview.png
           ditto -c -k --sequesterRsrc --keepParent dist mnTransfer-macOS.zip
       - name: Package Linux client
         if: runner.os == 'Linux'
