@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QSignalSpy>
+#include <QProcess>
 
 class TransferTests : public QObject {
     Q_OBJECT
@@ -60,6 +61,26 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!done.isEmpty()||!error.isEmpty(),30000);
         QVERIFY(interrupted);QVERIFY(error.isEmpty());QCOMPARE(done.size(),1);
         QFile result(done.first().first().toString());QVERIFY(result.open(QIODevice::ReadOnly));QCOMPARE(result.readAll(),bytes);
+    }
+    void cliProcesses() {
+        QTemporaryDir work;QVERIFY(work.isValid());QDir(work.path()).mkdir("out");
+        auto bytes=Crypto::random(3*1024*1024+3);auto source=work.path()+"/image.iso",code=work.path()+"/pair.code",out=work.path()+"/out";
+        QFile file(source);QVERIFY(file.open(QIODevice::WriteOnly));file.write(bytes);file.close();
+        auto executable=QCoreApplication::applicationDirPath()+"/mnTransfer";
+#ifdef Q_OS_WIN
+        executable+=".exe";
+#elif defined(Q_OS_MACOS)
+        executable+=".app/Contents/MacOS/mnTransfer";
+#endif
+        Relay relay;QVERIFY(relay.listen());QProcess sender,receiver;
+        sender.start(executable,{"--send",source,"--relay","ws://127.0.0.1:"+QString::number(relay.port()),"--code-file",code,"--timeout","20"});
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo(code).size()>0,5000);
+        receiver.start(executable,{"--code-file",code,"--out",out,"--timeout","20"});
+        QTRY_VERIFY_WITH_TIMEOUT(receiver.state()==QProcess::NotRunning,15000);
+        QTRY_VERIFY_WITH_TIMEOUT(sender.state()==QProcess::NotRunning,15000);
+        QVERIFY2(receiver.exitCode()==0,receiver.readAllStandardError().constData());
+        QVERIFY2(sender.exitCode()==0,sender.readAllStandardError().constData());
+        QFile result(out+"/image.iso");QVERIFY(result.open(QIODevice::ReadOnly));QCOMPARE(result.readAll(),bytes);
     }
     void maliciousFilename() {
         QTemporaryDir directory;Relay relay;QVERIFY(relay.listen());

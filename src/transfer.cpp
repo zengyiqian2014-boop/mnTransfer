@@ -28,6 +28,7 @@ Transfer::Transfer(QObject *p):QObject(p) {
     connect(&socket,&QWebSocket::binaryMessageReceived,this,[this](const QByteArray &s){try{binary(s);}catch(const std::exception &e){fail(QString::fromUtf8(e.what()));}});
     connect(&socket,&QWebSocket::bytesWritten,this,[this](qint64){if(sending&&phase==Phase::Data)pump();});
     connect(&socket,&QWebSocket::disconnected,this,[this]{
+        if(phase==Phase::Done&&!sending){emit completed(target);return;}
         if(stopping||phase==Phase::Done||phase==Phase::Error||phase==Phase::Idle)return;
         ++epoch;file.flush();file.close();phase=Phase::Pairing;emit status("连接中断，保留断点并重连 / Reconnecting");reconnect.start();
     });
@@ -143,7 +144,10 @@ void Transfer::binary(const QByteArray &b) {
         target=QDir(folder).filePath(name);
         for(unsigned i=1;QFileInfo::exists(target)&&i<10000;i++)target=QDir(folder).filePath(name+" ("+QString::number(i)+")");
         ensure(QFile::rename(partPath,target),"Cannot finalize download; partial file retained");
-        phase=Phase::Done;reply({{"kind","done"},{"bytes",QString::number(total)}});emit progress(total,total);emit completed(target);return;
+        phase=Phase::Done;reply({{"kind","done"},{"bytes",QString::number(total)}});emit progress(total,total);
+        // Finish the WebSocket close handshake before telling a CLI receiver
+        // to exit. Otherwise its queued authenticated receipt can be dropped.
+        socket.close();return;
     }
     throw std::runtime_error("Unknown file record");
 }
