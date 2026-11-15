@@ -1,0 +1,8 @@
+{
+  "name": "mntransfer-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"dev": "wrangler dev", "deploy": "wrangler deploy", "test": "node --test test/*.test.mjs"},
+  "devDependencies": {"wrangler": "4.50.0"}
+}
